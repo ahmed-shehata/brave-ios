@@ -258,8 +258,8 @@ extension BrowserViewController: WKNavigationDelegate {
       adBlockService: self.braveCore.adblockService
     )
     
-    // Setup any services that use the local data file service
-    CleanURLService.shared.setup(with: self.braveCore.localDataFileService)
+    // Setup any services that use the sanitizerService
+    CleanURLService.shared.setup(with: self.braveCore.urlSanitizerService)
     
     if let mainDocumentURL = navigationAction.request.mainDocumentURL {
       if mainDocumentURL != tab?.currentPageData?.mainFrameURL {

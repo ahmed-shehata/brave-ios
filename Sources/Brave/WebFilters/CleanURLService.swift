@@ -9,7 +9,7 @@ import BraveCore
 /// A helper class that helps us clean urls for "clean copy" feature
 class CleanURLService {
   public static let shared = CleanURLService()
-  private weak var localDataService: LocalDataFileService?
+  private weak var urlSanitizerService: URLSanitizerService?
   
   /// Initialize this instance with a network manager
   init() {}
@@ -17,12 +17,12 @@ class CleanURLService {
   /// Setup this downloader with rule `JSON` data.
   ///
   /// - Note: Decoded values that have unknown types are filtered out
-  func setup(with localDataService: LocalDataFileService) {
-    self.localDataService = localDataService
+  func setup(with urlSanitizerService: URLSanitizerService) {
+    self.urlSanitizerService = urlSanitizerService
   }
   
   /// Cleanup the url using the stored matcher
   func cleanup(url: URL) -> URL {
-    return localDataService?.cleanedURL(url) ?? url
+    return urlSanitizerService?.sanitizedURL(url) ?? url
   }
 }
