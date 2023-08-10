@@ -267,7 +267,7 @@ extension BrowserViewController: WKNavigationDelegate {
       
       let domainForMainFrame = Domain.getOrCreate(forUrl: mainDocumentURL, persistent: !isPrivateBrowsing)
       
-      // Debouncing logic
+      // Debouncing and query param stripping
       // Handle debouncing for main frame only and only if the site (etld+1) changes
       // We also only handle `http` and `https` requests
       if Preferences.Shields.autoRedirectTrackingURLs.value, url.isWebPage(includeDataURIs: false),
@@ -275,6 +275,31 @@ extension BrowserViewController: WKNavigationDelegate {
          currentURL.baseDomain != url.baseDomain,
          domainForMainFrame.isShieldExpected(.AdblockAndTp, considerAllShieldsOption: true),
          navigationAction.targetFrame?.isMainFrame == true {
+        // Handle query param stripping
+        if let requestURL = navigationAction.request.url, let requestMethod = navigationAction.request.httpMethod {
+          let filteredURL = QueryFilterService.stripQueryParams(
+            fromRequest: requestURL,
+            // We pass the currentURL because we don't have initiator url available
+            // We would need to keep track of a redirect chain to get these values
+            // These are only used for same origin checks internally
+            initiatorURL: currentURL,
+            redirectSourceURL: currentURL,
+            requestMethod: requestMethod,
+            // We know above that this canot be internal
+            // as we do an internal check and cancel the request above
+            isInternalRedirect: false
+          )
+          
+          // If the request url changed, we need to redirect the user
+          if requestURL != filteredURL {
+            var modifiedRequest = navigationAction.request
+            modifiedRequest.url = filteredURL
+            tab?.loadRequest(modifiedRequest)
+            return (.cancel, preferences)
+          }
+        }
+        
+        // Handle Debounce
         // Lets get the redirect chain.
         // Then we simply get all elements up until the user allows us to redirect
         // (i.e. appropriate settings are enabled for that redirect rule)
