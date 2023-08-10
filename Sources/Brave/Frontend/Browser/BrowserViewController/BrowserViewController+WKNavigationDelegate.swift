@@ -278,8 +278,7 @@ extension BrowserViewController: WKNavigationDelegate {
         // Handle query param stripping
         if let requestURL = navigationAction.request.url,
            let requestMethod = navigationAction.request.httpMethod,
-           let filteredURL = QueryFilterService.stripQueryParams(
-            fromRequest: requestURL,
+           let filteredURL = (requestURL as NSURL).stripTrackerParams(
             // We pass the currentURL because we don't have initiator url available
             // We would need to keep track of a redirect chain to get these values
             // These are only used for same origin checks internally
