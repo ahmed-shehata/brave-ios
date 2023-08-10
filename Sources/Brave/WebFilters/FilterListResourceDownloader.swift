@@ -278,11 +278,10 @@ public class FilterListResourceDownloader {
       
       do {
         let filterSet = try String(contentsOf: filterListURL, encoding: .utf8)
-        var wasTruncated: Bool = false
-        let jsonRules = AdblockEngine.contentBlockerRules(fromFilterSet: filterSet, truncated: &wasTruncated)
+        let result = try AdblockEngine.contentBlockerRules(fromFilterSet: filterSet)
         
         try await ContentBlockerManager.shared.compile(
-          encodedContentRuleList: jsonRules, for: blocklistType,
+          encodedContentRuleList: result.rulesJSON, for: blocklistType,
           options: .all, modes: modes
         )
         

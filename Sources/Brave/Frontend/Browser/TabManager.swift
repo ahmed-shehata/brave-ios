@@ -1239,7 +1239,7 @@ extension TabManager: NSFetchedResultsControllerDelegate {
       let tabsForDomain = self.allTabs.filter { $0.url?.domainURL.absoluteString.caseInsensitiveCompare(domainURL) == .orderedSame }
       tabsForDomain.forEach { tab in
         Task { @MainActor in
-          let privateMode = PrivateBrowsingManager.shared.isPrivateBrowsing
+          let privateMode = privateBrowsingManager.isPrivateBrowsing
           guard let keyringService = BraveWallet.KeyringServiceFactory.get(privateMode: privateMode) else {
             return
           }
