@@ -276,8 +276,9 @@ extension BrowserViewController: WKNavigationDelegate {
          domainForMainFrame.isShieldExpected(.AdblockAndTp, considerAllShieldsOption: true),
          navigationAction.targetFrame?.isMainFrame == true {
         // Handle query param stripping
-        if let requestURL = navigationAction.request.url, let requestMethod = navigationAction.request.httpMethod {
-          let filteredURL = QueryFilterService.stripQueryParams(
+        if let requestURL = navigationAction.request.url,
+           let requestMethod = navigationAction.request.httpMethod,
+           let filteredURL = QueryFilterService.stripQueryParams(
             fromRequest: requestURL,
             // We pass the currentURL because we don't have initiator url available
             // We would need to keep track of a redirect chain to get these values
@@ -288,15 +289,11 @@ extension BrowserViewController: WKNavigationDelegate {
             // We know above that this canot be internal
             // as we do an internal check and cancel the request above
             isInternalRedirect: false
-          )
-          
-          // If the request url changed, we need to redirect the user
-          if requestURL != filteredURL {
-            var modifiedRequest = navigationAction.request
-            modifiedRequest.url = filteredURL
-            tab?.loadRequest(modifiedRequest)
-            return (.cancel, preferences)
-          }
+           ) {
+          var modifiedRequest = navigationAction.request
+          modifiedRequest.url = filteredURL
+          tab?.loadRequest(modifiedRequest)
+          return (.cancel, preferences)
         }
         
         // Handle Debounce
