@@ -130,11 +130,10 @@ extension BrowserViewController: WKNavigationDelegate {
 
   @MainActor
   public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, preferences: WKWebpagePreferences) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
-    guard var url = navigationAction.request.url else {
+    guard var requestURL = navigationAction.request.url else {
       return (.cancel, preferences)
     }
-
-    if InternalURL.isValid(url: url) {
+    if InternalURL.isValid(url: requestURL) {
       if navigationAction.navigationType != .backForward, navigationAction.isInternalUnprivileged,
           (navigationAction.sourceFrame != nil || navigationAction.targetFrame?.isMainFrame == false || navigationAction.request.cachePolicy == .useProtocolCachePolicy) {
         Logger.module.warning("Denying unprivileged request: \(navigationAction.request)")
@@ -144,11 +143,11 @@ extension BrowserViewController: WKNavigationDelegate {
       return (.allow, preferences)
     }
 
-    if url.scheme == "about" {
+    if requestURL.scheme == "about" {
       return (.allow, preferences)
     }
 
-    if url.isBookmarklet {
+    if requestURL.isBookmarklet {
       return (.cancel, preferences)
     }
 
@@ -165,11 +164,14 @@ extension BrowserViewController: WKNavigationDelegate {
     // First special case are some schemes that are about Calling. We prompt the user to confirm this action. This
     // gives us the exact same behaviour as Safari.
     let tab = tab(for: webView)
+    tab?.currentRequestURL = requestURL
+    let navigationChain = [tab?.redirectSourceURL, tab?.currentRequestURL].compactMap({ $0?.absoluteString }).joined(separator: " -> ")
+    ContentBlockerManager.log.debug("NAVIGATE: \(navigationChain)")
     
-    if ["sms", "tel", "facetime", "facetime-audio"].contains(url.scheme) {
+    if ["sms", "tel", "facetime", "facetime-audio"].contains(requestURL.scheme) {
       
       // Do not allow opening external URLs from child tabs
-      handleExternalURL(url, tab: tab, navigationAction: navigationAction)
+      handleExternalURL(requestURL, tab: tab, navigationAction: navigationAction)
       return (.cancel, preferences)
     }
 
@@ -177,31 +179,31 @@ extension BrowserViewController: WKNavigationDelegate {
     // instead of being loaded in the webview.
     // In addition we are exchaging actual scheme with "maps" scheme
     // So the Apple maps URLs will open properly
-    if let mapsURL = isAppleMapsURL(url), mapsURL.enabled {
+    if let mapsURL = isAppleMapsURL(requestURL), mapsURL.enabled {
       // Do not allow opening external URLs from child tabs
       handleExternalURL(mapsURL.url, tab: tab, navigationAction: navigationAction)
       return (.cancel, preferences)
     }
 
-    if isStoreURL(url) {
+    if isStoreURL(requestURL) {
       // Do not allow opening external URLs from child tabs
-      handleExternalURL(url, tab: tab, navigationAction: navigationAction)
+      handleExternalURL(requestURL, tab: tab, navigationAction: navigationAction)
       return (.cancel, preferences)
     }
 
     // Handles custom mailto URL schemes.
-    if url.scheme == "mailto" {
+    if requestURL.scheme == "mailto" {
       // Do not allow opening external URLs from child tabs
-      handleExternalURL(url, tab: tab, navigationAction: navigationAction)
+      handleExternalURL(requestURL, tab: tab, navigationAction: navigationAction)
       return (.cancel, preferences)
     }
     
     // Handling calendar .ics files
-    if navigationAction.targetFrame?.isMainFrame == true, url.pathExtension.lowercased() == "ics" {
+    if navigationAction.targetFrame?.isMainFrame == true, requestURL.pathExtension.lowercased() == "ics" {
       // This is not ideal. It pushes a new view controller on top of the BVC
       // and you have to dismiss it manually after you managed the calendar event.
       // I do not see a workaround for it, Chrome iOS does the same thing.
-      let vc = SFSafariViewController(url: url, configuration: .init())
+      let vc = SFSafariViewController(url: requestURL, configuration: .init())
       vc.modalPresentationStyle = .formSheet
       self.present(vc, animated: true)
       
@@ -209,32 +211,32 @@ extension BrowserViewController: WKNavigationDelegate {
     }
     
     // handles IPFS URL schemes
-    if url.isIPFSScheme {
+    if requestURL.isIPFSScheme {
       if navigationAction.targetFrame?.isMainFrame == true {
-        handleIPFSSchemeURL(url, visitType: .link)
+        handleIPFSSchemeURL(requestURL, visitType: .link)
       }
       return (.cancel, preferences)
     }
     
     // handles Decentralized DNS
-    if let decentralizedDNSHelper = self.decentralizedDNSHelperFor(url: url),
+    if let decentralizedDNSHelper = self.decentralizedDNSHelperFor(url: requestURL),
        navigationAction.targetFrame?.isMainFrame == true {
       topToolbar.locationView.loading = true
-      let result = await decentralizedDNSHelper.lookup(domain: url.schemelessAbsoluteDisplayString)
+      let result = await decentralizedDNSHelper.lookup(domain: requestURL.schemelessAbsoluteDisplayString)
       topToolbar.locationView.loading = tabManager.selectedTab?.loading ?? false
       guard !Task.isCancelled else { // user pressed stop, or typed new url
         return (.cancel, preferences)
       }
       switch result {
       case let .loadInterstitial(service):
-        showWeb3ServiceInterstitialPage(service: service, originalURL: url, visitType: .link)
+        showWeb3ServiceInterstitialPage(service: service, originalURL: requestURL, visitType: .link)
         return (.cancel, preferences)
       case let .load(resolvedURL):
         if resolvedURL.isIPFSScheme {
           handleIPFSSchemeURL(resolvedURL, visitType: .link)
           return (.cancel, preferences)
         } else { // non-ipfs, treat as normal url / link tapped
-          url = resolvedURL
+          requestURL = resolvedURL
         }
       case .none:
         break
@@ -244,9 +246,9 @@ extension BrowserViewController: WKNavigationDelegate {
     let isPrivateBrowsing = privateBrowsingManager.isPrivateBrowsing
     
     // Website redirection logic
-    if url.isWebPage(includeDataURIs: false),
+    if requestURL.isWebPage(includeDataURIs: false),
        navigationAction.targetFrame?.isMainFrame == true,
-       let redirectURL = WebsiteRedirects.redirect(for: url) {
+       let redirectURL = WebsiteRedirects.redirect(for: requestURL) {
       
       tab?.loadRequest(URLRequest(url: redirectURL))
       return (.cancel, preferences)
@@ -267,63 +269,13 @@ extension BrowserViewController: WKNavigationDelegate {
       
       let domainForMainFrame = Domain.getOrCreate(forUrl: mainDocumentURL, persistent: !isPrivateBrowsing)
       
-      // Debouncing and query param stripping
-      // Handle debouncing for main frame only and only if the site (etld+1) changes
-      // We also only handle `http` and `https` requests
-      if Preferences.Shields.autoRedirectTrackingURLs.value, url.isWebPage(includeDataURIs: false),
-         let currentURL = tab?.webView?.url,
-         currentURL.baseDomain != url.baseDomain,
-         domainForMainFrame.isShieldExpected(.AdblockAndTp, considerAllShieldsOption: true),
-         navigationAction.targetFrame?.isMainFrame == true {
-        // Handle query param stripping
-        if let requestURL = navigationAction.request.url,
-           let requestMethod = navigationAction.request.httpMethod,
-           let filteredURL = (requestURL as NSURL).stripTrackerParams(
-            // We pass the currentURL because we don't have initiator url available
-            // We would need to keep track of a redirect chain to get these values
-            // These are only used for same origin checks internally
-            initiatorURL: currentURL,
-            redirectSourceURL: currentURL,
-            requestMethod: requestMethod,
-            // We know above that this canot be internal
-            // as we do an internal check and cancel the request above
-            isInternalRedirect: false
-           ) {
-          var modifiedRequest = navigationAction.request
-          modifiedRequest.url = filteredURL
-          tab?.loadRequest(modifiedRequest)
-          return (.cancel, preferences)
-        }
-        
-        // Handle Debounce
-        // Lets get the redirect chain.
-        // Then we simply get all elements up until the user allows us to redirect
-        // (i.e. appropriate settings are enabled for that redirect rule)
-        let redirectChain = DebouncingService.shared
-          .redirectChain(for: url)
-          .contiguousUntil { _, rule in
-            return rule.preferences.allSatisfy { pref in
-              switch pref {
-              case .deAmpEnabled:
-                return Preferences.Shields.autoRedirectAMPPages.value
-              }
-            }
-          }
-        
-        // Once we check the redirect chain only need the last (final) url from our redirect chain
-        if let redirectURL = redirectChain.last?.url {
-          // For now we only allow the `Referer`. The browser will add other headers during navigation.
-          var modifiedRequest = URLRequest(url: redirectURL)
-
-          for (headerKey, headerValue) in navigationAction.request.allHTTPHeaderFields ?? [:] {
-            guard headerKey == "Referer" else { continue }
-            modifiedRequest.setValue(headerValue, forHTTPHeaderField: headerKey)
-          }
-
-          tab?.loadRequest(modifiedRequest)
-          // Cancel the original request. We don't want it to load as it's tracking us
-          return (.cancel, preferences)
-        }
+      if let tab = tab, let modifiedRequest = getInternalRedirect(
+        from: navigationAction, in: tab, domainForMainFrame: domainForMainFrame) {
+        tab.isInternalRedirect = true
+        tab.loadRequest(modifiedRequest)
+        return (.cancel, preferences)
+      } else {
+        tab?.isInternalRedirect = false
       }
       
       // Set some additional user scripts
@@ -335,19 +287,19 @@ extension BrowserViewController: WKNavigationDelegate {
           
           // Add request blocking script
           // This script will block certian `xhr` and `window.fetch()` requests
-          .requestBlocking: url.isWebPage(includeDataURIs: false) &&
+          .requestBlocking: requestURL.isWebPage(includeDataURIs: false) &&
                             domainForMainFrame.isShieldExpected(.AdblockAndTp, considerAllShieldsOption: true),
           
           // The tracker protection script
           // This script will track what is blocked and increase stats
-          .trackerProtectionStats: url.isWebPage(includeDataURIs: false) &&
+          .trackerProtectionStats: requestURL.isWebPage(includeDataURIs: false) &&
                                    domainForMainFrame.isShieldExpected(.AdblockAndTp, considerAllShieldsOption: true)
         ])
       }
       
       // Check if custom user scripts must be added to or removed from the web view.
       if let targetFrame = navigationAction.targetFrame {
-        tab?.currentPageData?.addSubframeURL(forRequestURL: url, isForMainFrame: targetFrame.isMainFrame)
+        tab?.currentPageData?.addSubframeURL(forRequestURL: requestURL, isForMainFrame: targetFrame.isMainFrame)
         let scriptTypes = await tab?.currentPageData?.makeUserScriptTypes(domain: domainForMainFrame) ?? []
         tab?.setCustomUserScript(scripts: scriptTypes)
       }
@@ -356,11 +308,11 @@ extension BrowserViewController: WKNavigationDelegate {
     // Brave Search logic.
 
     if navigationAction.targetFrame?.isMainFrame == true,
-      BraveSearchManager.isValidURL(url) {
+      BraveSearchManager.isValidURL(requestURL) {
 
       // Add Brave Search headers if Rewards is enabled
       if !isPrivateBrowsing && rewards.isEnabled && navigationAction.request.allHTTPHeaderFields?["X-Brave-Ads-Enabled"] == nil {
-        var modifiedRequest = URLRequest(url: url)
+        var modifiedRequest = URLRequest(url: requestURL)
         modifiedRequest.setValue("1", forHTTPHeaderField: "X-Brave-Ads-Enabled")
         tab?.loadRequest(modifiedRequest)
         return (.cancel, preferences)
@@ -369,7 +321,7 @@ extension BrowserViewController: WKNavigationDelegate {
       // We fetch cookies to determine if backup search was enabled on the website.
       let profile = self.profile
       let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-      tab?.braveSearchManager = BraveSearchManager(profile: profile, url: url, cookies: cookies)
+      tab?.braveSearchManager = BraveSearchManager(profile: profile, url: requestURL, cookies: cookies)
       if let braveSearchManager = tab?.braveSearchManager {
         braveSearchManager.fallbackQueryResultsPending = true
         braveSearchManager.shouldUseFallback { backupQuery in
@@ -395,12 +347,12 @@ extension BrowserViewController: WKNavigationDelegate {
     // This is the normal case, opening a http or https url, which we handle by loading them in this WKWebView. We
     // always allow this. Additionally, data URIs are also handled just like normal web pages.
 
-    if ["http", "https", "data", "blob", "file"].contains(url.scheme) {
+    if ["http", "https", "data", "blob", "file"].contains(requestURL.scheme) {
       if navigationAction.targetFrame?.isMainFrame == true {
-        tab?.updateUserAgent(webView, newURL: url)
+        tab?.updateUserAgent(webView, newURL: requestURL)
       }
 
-      pendingRequests[url.absoluteString] = navigationAction.request
+      pendingRequests[requestURL.absoluteString] = navigationAction.request
 
       // Adblock logic,
       // Only use main document URL, not the request URL
@@ -412,8 +364,8 @@ extension BrowserViewController: WKNavigationDelegate {
       // No adblocking logic is be used on session restore urls. It uses javascript to retrieve the
       // request then the page is reloaded with a proper url and adblocking rules are applied.
       if let mainDocumentURL = navigationAction.request.mainDocumentURL,
-        mainDocumentURL.schemelessAbsoluteString == url.schemelessAbsoluteString,
-        !(InternalURL(url)?.isSessionRestore ?? false),
+        mainDocumentURL.schemelessAbsoluteString == requestURL.schemelessAbsoluteString,
+        !(InternalURL(requestURL)?.isSessionRestore ?? false),
         navigationAction.sourceFrame.isMainFrame || navigationAction.targetFrame?.isMainFrame == true {
         // Identify specific block lists that need to be applied to the requesting domain
         let domainForShields = Domain.getOrCreate(forUrl: mainDocumentURL, persistent: !isPrivateBrowsing)
@@ -425,7 +377,7 @@ extension BrowserViewController: WKNavigationDelegate {
       
       let documentTargetURL: URL? = navigationAction.request.mainDocumentURL ??
                                     navigationAction.targetFrame?.request.mainDocumentURL ??
-                                    url   // Should be the same as the sourceFrame URL
+                                    requestURL   // Should be the same as the sourceFrame URL
       if let documentTargetURL = documentTargetURL {
         let domainForShields = Domain.getOrCreate(forUrl: documentTargetURL, persistent: !isPrivateBrowsing)
         let isScriptsEnabled = !domainForShields.isShieldExpected(.NoScript, considerAllShieldsOption: true)
@@ -438,7 +390,7 @@ extension BrowserViewController: WKNavigationDelegate {
       }
 
       // Reset the block alert bool on new host.
-      if let newHost: String = url.host, let oldHost: String = webView.url?.host, newHost != oldHost {
+      if let newHost: String = requestURL.host, let oldHost: String = webView.url?.host, newHost != oldHost {
         self.tabManager.selectedTab?.alertShownCount = 0
         self.tabManager.selectedTab?.blockAllAlerts = false
       }
@@ -449,9 +401,9 @@ extension BrowserViewController: WKNavigationDelegate {
     // Standard schemes are handled in previous if-case.
     // This check handles custom app schemes to open external apps.
     // Our own 'brave' scheme does not require the switch-app prompt.
-    if url.scheme?.contains("brave") == false {
+    if requestURL.scheme?.contains("brave") == false {
       // Do not allow opening external URLs from child tabs
-      handleExternalURL(url, tab: tab, navigationAction: navigationAction) { didOpenURL in
+      handleExternalURL(requestURL, tab: tab, navigationAction: navigationAction) { didOpenURL in
         // Do not show error message for JS navigated links or redirect
         // as it's not the result of a user action.
         if !didOpenURL, navigationAction.navigationType == .linkActivated {
@@ -1148,6 +1100,71 @@ extension BrowserViewController: WKUIDelegate {
       self.show(toast: toast)
     }
     self.toolbarVisibilityViewModel.toolbarState = .expanded
+  }
+  
+  /// Get a possible redirect request from debouncing or query param stripping
+  private func getInternalRedirect(from navigationAction: WKNavigationAction, in tab: Tab, domainForMainFrame: Domain) -> URLRequest? {
+    let isPrivateBrowsing = privateBrowsingManager.isPrivateBrowsing
+    guard let requestURL = navigationAction.request.url else { return nil }
+    guard let mainDocumentURL = navigationAction.request.mainDocumentURL else { return nil }
+    
+    // Debouncing and query param stripping
+    // Handle debouncing for main frame only and only if the site (etld+1) changes
+    // We also only handle `http` and `https` requests
+    guard Preferences.Shields.autoRedirectTrackingURLs.value, requestURL.isWebPage(includeDataURIs: false),
+          domainForMainFrame.isShieldExpected(.AdblockAndTp, considerAllShieldsOption: true),
+          navigationAction.targetFrame?.isMainFrame == true
+    else { return nil }
+    
+    // Handle query param stripping
+    if let initialURL = tab.currentInitialURL, let requestMethod = navigationAction.request.httpMethod {
+      // Since we removed the first item, the
+      if let filteredURL = (requestURL as NSURL).stripTrackerParams(
+        initiatorURL: initialURL,
+        redirectSourceURL: tab.redirectSourceURL ?? initialURL,
+        requestMethod: requestMethod,
+        // We know above that this canot be internal
+        // as we do an internal check and cancel the request above
+        isInternalRedirect: tab.isInternalRedirect
+      ) {
+        var modifiedRequest = navigationAction.request
+        modifiedRequest.url = filteredURL
+        return modifiedRequest
+      }
+    }
+    
+    // Handle Debounce
+    // Lets get the redirect chain.
+    // Then we simply get all elements up until the user allows us to redirect
+    // (i.e. appropriate settings are enabled for that redirect rule)
+    if let currentURL = tab.webView?.url,
+       currentURL.baseDomain != requestURL.baseDomain {
+      let redirectChain = DebouncingService.shared
+        .redirectChain(for: requestURL)
+        .contiguousUntil { _, rule in
+          return rule.preferences.allSatisfy { pref in
+            switch pref {
+            case .deAmpEnabled:
+              return Preferences.Shields.autoRedirectAMPPages.value
+            }
+          }
+        }
+      
+      // Once we check the redirect chain only need the last (final) url from our redirect chain
+      if let redirectURL = redirectChain.last?.url {
+        // For now we only allow the `Referer`. The browser will add other headers during navigation.
+        var modifiedRequest = URLRequest(url: redirectURL)
+        
+        for (headerKey, headerValue) in navigationAction.request.allHTTPHeaderFields ?? [:] {
+          guard headerKey == "Referer" else { continue }
+          modifiedRequest.setValue(headerValue, forHTTPHeaderField: headerKey)
+        }
+        
+        return modifiedRequest
+      }
+    }
+      
+    return nil
   }
 }
 
