@@ -314,7 +314,8 @@ extension BrowserViewController: PlaylistScriptHandlerDelegate, PlaylistFolderSh
             self.addToPlayListActivityItem = nil
 
             AppReviewManager.shared.processSubCriteria(for: .numberOfPlaylistItems)
-            PlaylistItem.addItem(item, folderUUID: folderUUID, cachedData: nil) { [weak self] in
+              // TODO: Can we pass in the same context here?
+            PlaylistItem.addItem(item, folderUUID: folderUUID, cachedData: nil) { [weak self] context in
               guard let self = self else { return }
               PlaylistManager.shared.autoDownload(item: item)
 
@@ -342,9 +343,10 @@ extension BrowserViewController: PlaylistScriptHandlerDelegate, PlaylistFolderSh
       addToPlayListActivityItem = nil
 
       AppReviewManager.shared.processSubCriteria(for: .numberOfPlaylistItems)
-      PlaylistItem.addItem(item, folderUUID: folderUUID, cachedData: nil) { [weak self] in
+        // TODO: Can we pass the same context here as the update Cache call?
+      PlaylistItem.addItem(item, folderUUID: folderUUID, cachedData: nil) { [weak self] context in
         guard let self = self else { return }
-        PlaylistManager.shared.autoDownload(item: item)
+          PlaylistManager.shared.autoDownload(item: item, context: context)
 
         self.updatePlaylistURLBar(
           tab: self.tabManager.selectedTab,

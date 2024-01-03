@@ -7,6 +7,7 @@ import Foundation
 import CoreData
 import Shared
 import os.log
+import Darwin
 
 @objc(PlaylistItem)
 final public class PlaylistItem: NSManagedObject, CRUD, Identifiable {
@@ -51,7 +52,7 @@ final public class PlaylistItem: NSManagedObject, CRUD, Identifiable {
     self.mimeType = mimeType
     self.mediaSrc = mediaSrc
     self.order = .min
-    self.uuid = UUID().uuidString
+    self.uuid =  UUID().uuidString // UUID(uuidString: pageSrc)?.uuidString ?? UUID().uuidString
   }
 
   public var id: String {
@@ -109,7 +110,7 @@ final public class PlaylistItem: NSManagedObject, CRUD, Identifiable {
       sectionNameKeyPath: nil, cacheName: nil)
   }
 
-  public static func addItem(_ item: PlaylistInfo, folderUUID: String? = nil, cachedData: Data?, completion: (() -> Void)? = nil) {
+    public static func addItem(_ item: PlaylistInfo, folderUUID: String? = nil, cachedData: Data?, completion: ((_ context: NSManagedObjectContext?) -> Void)? = nil) {
     DataController.perform(context: .new(inMemory: false), save: false) { context in
       let playlistItem = PlaylistItem(context: context,
                                       name: item.name,
@@ -122,12 +123,15 @@ final public class PlaylistItem: NSManagedObject, CRUD, Identifiable {
       playlistItem.order = item.order
       playlistItem.uuid = item.tagId
       playlistItem.playlistFolder = PlaylistFolder.getFolder(uuid: folderUUID ?? PlaylistFolder.savedFolderUUID, context: context)
-
+        if let itemTest = PlaylistItem.first(where: NSPredicate(format: "uuid == %@", item.tagId), context: context) {
+            print(itemTest.debugDescription)
+        }
       PlaylistItem.reorderItems(context: context)
+      print("@DEBUG:: Added Item in cache!")
       PlaylistItem.saveContext(context)
 
       DispatchQueue.main.async {
-        completion?()
+        completion?(context)
       }
     }
   }
@@ -262,7 +266,7 @@ final public class PlaylistItem: NSManagedObject, CRUD, Identifiable {
     }
   }
 
-  public static func updateItem(_ item: PlaylistInfo, completion: (() -> Void)? = nil) {
+    public static func updateItem(_ item: PlaylistInfo, completion: ((_ context: NSManagedObjectContext?) -> Void)? = nil) {
     if itemExists(pageSrc: item.pageSrc) || itemExists(uuid: item.tagId) {
       DataController.perform(context: .new(inMemory: false), save: false) { context in
         if let existingItem = PlaylistItem.first(where: NSPredicate(format: "pageSrc == %@ OR uuid == %@", item.pageSrc, item.tagId), context: context) {
@@ -279,7 +283,7 @@ final public class PlaylistItem: NSManagedObject, CRUD, Identifiable {
         PlaylistItem.saveContext(context)
 
         DispatchQueue.main.async {
-          completion?()
+          completion?(context)
         }
       }
     } else {
@@ -326,26 +330,35 @@ final public class PlaylistItem: NSManagedObject, CRUD, Identifiable {
         playlistItem.order = item.order
         playlistItem.uuid = item.tagId
         playlistItem.playlistFolder = folder
+          if let itemTest = PlaylistItem.first(where: NSPredicate(format: "uuid == %@", item.tagId), context: context) {
+              print(itemTest.debugDescription)
+          }
       }
       
       PlaylistItem.reorderItems(context: context)
       PlaylistItem.saveContext(context)
-
       DispatchQueue.main.async {
         completion?()
       }
     }
   }
+// TODO: This seems it isn't always called in auto download, it looks like the add to playlist save context is not called yet before this one here, .first doesn't find it until 2nd time
+    public static func updateCache(uuid: String, pageSrc: String, cachedData: Data?) {
+      print("@DEBUG:: Updating cache...")
+    DataController.perform(context: .new(inMemory: false), save: false) { context in
+        let items = PlaylistItem.all(where: nil, sortDescriptors: nil, fetchLimit: 500, context: context)
+        let last = items?.last
+        if let item = PlaylistItem.first(where: NSPredicate(format: "uuid == %@ OR pageSrc == %@", uuid, pageSrc), context: context) {
+            if let cachedData = cachedData, !cachedData.isEmpty {
+              item.cachedData = cachedData
+                print("@DEBUG:: Updated cache!")
+                PlaylistItem.saveContext(context)
 
-  public static func updateCache(uuid: String, cachedData: Data?) {
-    DataController.perform(context: .new(inMemory: false), save: true) { context in
-      let item = PlaylistItem.first(where: NSPredicate(format: "uuid == %@", uuid), context: context)
-
-      if let cachedData = cachedData, !cachedData.isEmpty {
-        item?.cachedData = cachedData
-      } else {
-        item?.cachedData = nil
-      }
+     
+            } else {
+              item.cachedData = nil
+            }
+        }
     }
   }
 

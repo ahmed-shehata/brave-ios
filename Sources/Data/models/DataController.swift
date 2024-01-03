@@ -20,6 +20,7 @@ public enum WriteContext {
 public class DataController {
   private static let databaseName = "Brave.sqlite"
   private static let modelName = "Model"
+    private static let cacheCtxt = DataController.newBackgroundContext()
 
   /// This code is checked when the persistent store is loaded.
   /// For all codes except this one we crash the app because of database failure.
@@ -106,7 +107,6 @@ public class DataController {
     case .new(let inMemory):
       // Though keeping same queue does not make a difference but kept them diff for independent processing.
       let queue = inMemory ? DataController.sharedInMemory.operationQueue : DataController.shared.operationQueue
-
       queue.addOperation({
         let backgroundContext = inMemory ? DataController.newBackgroundContextInMemory() : DataController.newBackgroundContext()
         // performAndWait doesn't block main thread because it fires on OperationQueue`s background thread.
@@ -138,6 +138,10 @@ public class DataController {
   static var viewContext: NSManagedObjectContext {
     return DataController.shared.container.viewContext
   }
+    
+    static var cacheContext: NSManagedObjectContext {
+        return DataController.cacheCtxt
+    }
 
   // Context object also allows us access to all persistent container data if needed.
   static var viewContextInMemory: NSManagedObjectContext {

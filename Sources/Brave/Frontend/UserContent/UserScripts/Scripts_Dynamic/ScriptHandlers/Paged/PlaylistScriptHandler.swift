@@ -195,7 +195,7 @@ class PlaylistScriptHandler: NSObject, TabContentScript {
       self.delegate?.updatePlaylistURLBar(tab: self.tab, state: .existingItem, item: item)
     }
 
-    PlaylistItem.updateItem(item) { [weak self] in
+      PlaylistItem.updateItem(item) { [weak self] _ in
       guard let self = self else { return }
 
       Logger.module.debug("Playlist Item Updated")

@@ -7,6 +7,7 @@ import Foundation
 import WebKit
 import Shared
 import os.log
+//import CryptoKit
 
 public struct PlaylistInfo: Codable, Identifiable, Hashable, Equatable {
   public let name: String
@@ -25,6 +26,19 @@ public struct PlaylistInfo: Codable, Identifiable, Hashable, Equatable {
   public var id: String {
     tagId
   }
+    
+//  private static func deterministicUUID(from strings: [String]) -> UUID {
+//        let combinedString = strings.joined()
+//
+//        let hashedData = SHA256.hash(data: Data(combinedString.utf8))
+//
+//        let uuidData = hashedData.prefix(16)
+//
+//        let uuid = UUID(uuid: uuidData)
+//
+//        return uuid
+//    }
+
   
   public init(pageSrc: String) {
     self.name = ""
@@ -36,7 +50,7 @@ public struct PlaylistInfo: Codable, Identifiable, Hashable, Equatable {
     self.lastPlayedOffset = 0.0
     self.dateAdded = Date()
     self.detected = false
-    self.tagId = UUID().uuidString
+    self.tagId = UUID().uuidString // UUID(uuidString: pageSrc)?.uuidString ?? UUID().uuidString
     self.order = Int32.min
     self.isInvisible = false
   }
@@ -51,7 +65,7 @@ public struct PlaylistInfo: Codable, Identifiable, Hashable, Equatable {
     self.lastPlayedOffset = item.lastPlayedOffset
     self.dateAdded = item.dateAdded
     self.detected = false
-    self.tagId = item.uuid ?? UUID().uuidString
+    self.tagId = item.uuid ?? UUID().uuidString // UUID(uuidString: item.pageSrc)?.uuidString ?? UUID().uuidString
     self.order = item.order
     self.isInvisible = false
   }
@@ -66,7 +80,7 @@ public struct PlaylistInfo: Codable, Identifiable, Hashable, Equatable {
     self.lastPlayedOffset = lastPlayedOffset
     self.detected = detected
     self.dateAdded = dateAdded
-    self.tagId = tagId.isEmpty ? UUID().uuidString : tagId
+    self.tagId = tagId.isEmpty ? UUID().uuidString : tagId // UUID(uuidString: pageSrc)?.uuidString ?? UUID().uuidString
     self.order = order
     self.isInvisible = isInvisible
   }

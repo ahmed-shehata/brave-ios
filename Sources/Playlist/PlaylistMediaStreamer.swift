@@ -131,7 +131,7 @@ public class PlaylistMediaStreamer {
                                      isInvisible: item.isInvisible) // Keep the same order
       
       let item = try await withCheckedThrowingContinuation { continuation in
-        PlaylistItem.updateItem(updatedItem) {
+          PlaylistItem.updateItem(updatedItem) {context in 
           continuation.resume(returning: updatedItem)
         }
       }

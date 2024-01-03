@@ -12,6 +12,7 @@ import Shared
 import Data
 import Preferences
 import os.log
+import Darwin
 
 public class PlaylistManager: NSObject {
   public static let shared = PlaylistManager()
@@ -272,7 +273,7 @@ public class PlaylistManager: NSObject {
     }
   }
 
-  public func download(item: PlaylistInfo) {
+    public func download(item: PlaylistInfo, context: NSManagedObjectContext? = nil) {
     guard downloadManager.downloadTask(for: item.tagId) == nil, let assetUrl = URL(string: item.src) else { return }
     Task {
       if assetUrl.scheme == "data" {
@@ -290,6 +291,7 @@ public class PlaylistManager: NSObject {
           self.downloadManager.downloadHLSAsset(assetUrl, for: item)
         }
       } else {
+          // TODO: This is not called in the auto download, it should be called for the download to actually start
         DispatchQueue.main.async {
           self.downloadManager.downloadFileAsset(assetUrl, for: item)
         }
@@ -398,7 +400,7 @@ public class PlaylistManager: NSObject {
         let url = try URL(resolvingBookmarkData: cachedData, bookmarkDataIsStale: &isStale)
         if FileManager.default.fileExists(atPath: url.path) {
           try FileManager.default.removeItem(atPath: url.path)
-          PlaylistItem.updateCache(uuid: item.tagId, cachedData: nil)
+          PlaylistItem.updateCache(uuid: item.tagId, pageSrc: item.pageSrc, cachedData: nil)
           onDownloadStateChanged(id: item.tagId, state: .invalid, displayName: nil, error: nil)
         }
         return true
@@ -463,7 +465,7 @@ public class PlaylistManager: NSObject {
             assets.forEach({
               if let item = PlaylistItem.cachedItem(cacheURL: $0), let itemId = item.uuid {
                 self.cancelDownload(itemId: itemId)
-                PlaylistItem.updateCache(uuid: itemId, cachedData: nil)
+                  PlaylistItem.updateCache(uuid: itemId, pageSrc: item.pageSrc, cachedData: nil)
               }
             })
           } catch {
@@ -482,7 +484,7 @@ public class PlaylistManager: NSObject {
     }
   }
 
-  public func autoDownload(item: PlaylistInfo) {
+    public func autoDownload(item: PlaylistInfo, context: NSManagedObjectContext? = nil) {
     guard let downloadType = PlayListDownloadType(rawValue: Preferences.Playlist.autoDownloadVideo.value) else {
       return
     }
@@ -736,7 +738,7 @@ extension PlaylistManager {
               isInvisible: item.isInvisible)
 
             if PlaylistItem.itemExists(uuid: item.tagId) || PlaylistItem.itemExists(pageSrc: item.pageSrc) {
-              PlaylistItem.updateItem(newItem) {
+                PlaylistItem.updateItem(newItem) {context in 
                 completion(duration.seconds)
               }
             } else {
